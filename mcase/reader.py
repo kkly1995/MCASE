@@ -20,3 +20,4 @@ def read_input(fname):
         except:
             print('failed to read the following line from input:')
             print(line)
+    return parameters
