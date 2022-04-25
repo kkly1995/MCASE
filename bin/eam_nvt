@@ -1,0 +1,57 @@
+#!/usr/bin/env python
+import numpy as np
+from ase.io import read
+from ase.units import kB
+from ase.calculators.eam import EAM
+from mcase.particle_moves import acceptance_ratio
+from mcase.reader import read_input
+from sys import argv
+
+settings = read_input(argv[1])
+rng = np.random.default_rng()
+
+# setup system
+walker = read(settings['xyz'])
+walker.calc = EAM(potential=settings['potential'], form=settings['form'])
+
+# setup simulation
+temperature = float(settings['temperature'])
+timestep = float(settings['timestep'])
+number_samples = int(settings['samples'])
+beta = 1.0/(kB*temperature)
+scale = np.sqrt(2*timestep)
+
+# successful read, print out stuff
+print('read inputs from ' + argv[1])
+print('particles read from ' + settings['xyz'])
+print('EAM model read from %s (%s format)'\
+        % (settings['potential'], settings['form']))
+print('temperature: %s K (beta = %s eV^-1)' % (temperature, beta))
+print('timestep: %s (length scale = %s)' % (timestep, scale))
+print('number of samples to calculate: %d' % number_samples)
+
+# start sampling
+accepted = 0
+r = walker.get_positions()
+energy = walker.get_potential_energy()
+force = walker.get_forces()
+
+for _ in range(number_samples):
+    dr = rng.normal(size=r.shape, scale=scale) + timestep*beta*force
+    r_new = r + dr
+    walker.set_positions(r_new)
+    energy_new = walker.get_potential_energy()
+    force_new = walker.get_forces()
+    # accept or reject
+    if rng.random() < acceptance_ratio(r, r_new, energy, energy_new,\
+            force, force_new, beta, timestep):
+        energy = energy_new
+        force = np.copy(force_new)
+        r = walker.get_positions(wrap=True) # wrap to avoid blowing up
+        accepted += 1
+    else:
+        walker.set_positions(r)
+    print(energy)
+
+# finished
+print('acceptance rate: %.2f' % (accepted / number_samples))
