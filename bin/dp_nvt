@@ -32,14 +32,14 @@ print('number of samples to calculate: %d' % number_samples)
 # start sampling
 accepted = 0
 r = walker.get_positions()
-energy = walker.get_potential_energy()[0]
+energy = walker.get_potential_energy()
 force = walker.get_forces()
 
 for _ in range(number_samples):
     dr = rng.normal(size=r.shape, scale=scale) + timestep*beta*force
     r_new = r + dr
     walker.set_positions(r_new)
-    energy_new = walker.get_potential_energy()[0]
+    energy_new = walker.get_potential_energy()
     force_new = walker.get_forces()
     # accept or reject
     if rng.random() < acceptance_ratio(r, r_new, energy, energy_new,\

@@ -3,8 +3,8 @@ import numpy as np
 import mcase.particle_moves as mcp
 import mcase.cell_moves as mcc
 from ase.io import read, write
-from ase.units import kB
-from ase.calculators.eam import EAM
+from ase.units import kB, GPa
+from deepmd.calculator import DP
 from mcase.reader import read_input
 from sys import argv
 
@@ -13,13 +13,14 @@ rng = np.random.default_rng()
 
 # setup system
 walker = read(settings['xyz'])
-walker.calc = EAM(potential=settings['potential'], form=settings['form'])
+walker.calc = DP(model=settings['model'])
 
 # setup simulation
 temperature = float(settings['temperature'])
-pressure = float(settings['pressure'])
+pressure = float(settings['pressure'])*GPa
 timestep = float(settings['timestep'])
 cellstep = float(settings['cellstep'])
+anglestep = float(settings['anglestep'])
 number_samples = int(settings['samples'])
 beta = 1.0/(kB*temperature)
 scale = np.sqrt(2*timestep)
@@ -27,12 +28,12 @@ scale = np.sqrt(2*timestep)
 # successful read, print out stuff
 print('read inputs from ' + argv[1])
 print('particles read from ' + settings['xyz'])
-print('EAM model read from %s (%s format)'\
-        % (settings['potential'], settings['form']))
+print('DP model read from ' + settings['model'])
 print('temperature: %s K (beta = %s eV^-1)' % (temperature, beta))
-print('pressure: %s eV/A^3' % pressure)
+print('pressure: %s eV/A^3 (%s GPa)' % (pressure, settings['pressure']))
 print('timestep: %s (length scale = %s)' % (timestep, scale))
 print('cell step: %s A' % cellstep)
+print('angle step: %s degree' % anglestep)
 print('number of samples to calculate: %d' % number_samples)
 
 # start sampling
@@ -41,7 +42,7 @@ c_accepted = 0 # for cell moves
 r = walker.get_positions()
 energy = walker.get_potential_energy()
 force = walker.get_forces()
-cell = walker.cell.cellpar()[:3] # stick to orthorhombic changes
+cell = walker.cell.cellpar()
 volume = walker.get_volume()
 N = len(walker)
 
@@ -62,7 +63,9 @@ for _ in range(number_samples):
     else:
         walker.set_positions(r)
     # cell move
-    dc = cellstep*(rng.random(size=3) - 0.5)
+    dc = rng.random(size=6) - 0.5
+    dc[:3] *= cellstep
+    dc[3:] *= anglestep
     cell_new = cell + dc
     walker.set_cell(cell_new, scale_atoms=True)
     volume_new = walker.get_volume()
@@ -77,7 +80,7 @@ for _ in range(number_samples):
         c_accepted += 1
     else:
         walker.set_cell(cell, scale_atoms=True)
-    print(energy, cell[0], cell[1], cell[2])
+    print(energy, cell[0], cell[1], cell[2], cell[3], cell[4], cell[5])
 
 # finished
 print('particle move acceptance rate: %.2f' % (p_accepted / number_samples))
