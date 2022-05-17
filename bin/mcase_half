@@ -1,10 +1,8 @@
 #!/usr/bin/env python
 import numpy as np
 import mcase.particle_moves as mcp
-import mcase.cell_moves as mcc
 from ase.io import read, write
-from ase.units import kB, GPa
-from pynep.calculate import NEP
+from ase.units import kB
 from mcase.reader import read_input
 from sys import argv
 
@@ -13,43 +11,54 @@ rng = np.random.default_rng()
 
 # setup system
 walker = read(settings['xyz'])
-walker.calc = NEP(settings['model'])
+
+# determine what the calculator is
+if settings['calculator'] == 'nep':
+    from pynep.calculate import NEP
+    walker.calc = NEP(settings['model'])
+elif settings['calculator'] == 'dp':
+    from deepmd.calculator import DP
+    walker.calc = DP(model=settings['model'])
+elif settings['calculator'] == nequip:
+    from nequip.ase import NequIPCalculator
+    walker.calc = NequIPCalculator.from_deployed_model(settings['model'],\
+            device='cuda')
+else:
+    print('calculator not recognized')
+    exit()
 
 # setup simulation
 temperature = float(settings['temperature'])
-pressure = float(settings['pressure'])*GPa
 timestep = float(settings['timestep'])
-cellstep = float(settings['cellstep'])
-anglestep = float(settings['anglestep'])
 number_samples = int(settings['samples'])
 beta = 1.0/(kB*temperature)
 scale = np.sqrt(2*timestep)
+
+# partition system
+dim = int(settings['dim']) # can be either 0, 1, or 2 (x, y, z)
+partition = float(settings['partition']) # 0 to 1, separate by scaled coordinates
+mask = (walker.get_scaled_positions(wrap=True)[:,dim] < partition)
 
 # successful read, print out stuff
 print('read inputs from ' + argv[1])
 print('particles read from ' + settings['xyz'])
 print('NEP model read from ' + settings['model'])
 print('temperature: %s K (beta = %s eV^-1)' % (temperature, beta))
-print('pressure: %s eV/A^3 (%s GPa)' % (pressure, settings['pressure']))
 print('timestep: %s (length scale = %s)' % (timestep, scale))
-print('cell step: %s A' % cellstep)
-print('angle step: %s degree' % anglestep)
 print('number of samples to calculate: %d' % number_samples)
+print('number of particles to move: %d' % np.sum(mask))
 
 # start sampling
-p_accepted = 0 # for particle moves
-c_accepted = 0 # for cell moves
+accepted = 0
 r = walker.get_positions()
 energy = walker.get_potential_energy()
 force = walker.get_forces()
-cell = walker.cell.cellpar()
-volume = walker.get_volume()
 N = len(walker)
 
 for _ in range(number_samples):
-    # particle move
     dr = rng.normal(size=r.shape, scale=scale) + timestep*beta*force
-    r_new = r + dr
+    r_new = np.copy(r)
+    r_new[mask] += dr[mask]
     walker.set_positions(r_new)
     energy_new = walker.get_potential_energy()
     force_new = walker.get_forces()
@@ -59,32 +68,13 @@ for _ in range(number_samples):
         energy = energy_new
         force = np.copy(force_new)
         r = walker.get_positions(wrap=True) # wrap to avoid blowing up
-        p_accepted += 1
+        accepted += 1
     else:
         walker.set_positions(r)
-    # cell move
-    dc = rng.random(size=6) - 0.5
-    dc[:3] *= cellstep
-    dc[3:] *= anglestep
-    cell_new = cell + dc
-    walker.set_cell(cell_new, scale_atoms=True)
-    volume_new = walker.get_volume()
-    energy_new = walker.get_potential_energy()
-    if rng.random() < mcc.acceptance_ratio(energy, energy_new,\
-            volume, volume_new, N, pressure, beta):
-        energy = energy_new
-        force = walker.get_forces()
-        r = walker.get_positions(wrap=True)
-        cell = np.copy(cell_new)
-        volume = volume_new
-        c_accepted += 1
-    else:
-        walker.set_cell(cell, scale_atoms=True)
-    print(energy, cell[0], cell[1], cell[2], cell[3], cell[4], cell[5])
+    print(energy)
 
 # finished
-print('particle move acceptance rate: %.2f' % (p_accepted / number_samples))
-print('cell move acceptance rate: %.2f' % (c_accepted / number_samples))
+print('particle move acceptance rate: %.2f' % (accepted / number_samples))
 
 print('writing final configuration to', settings['save_xyz'])
 write(settings['save_xyz'], walker, format='extxyz')

@@ -4,7 +4,6 @@ import mcase.particle_moves as mcp
 import mcase.cell_moves as mcc
 from ase.io import read, write
 from ase.units import kB, GPa
-from deepmd.calculator import DP
 from mcase.reader import read_input
 from sys import argv
 
@@ -13,7 +12,21 @@ rng = np.random.default_rng()
 
 # setup system
 walker = read(settings['xyz'])
-walker.calc = DP(model=settings['model'])
+
+# determine what the calculator is
+if settings['calculator'] == 'nep':
+    from pynep.calculate import NEP
+    walker.calc = NEP(settings['model'])
+elif settings['calculator'] == 'dp':
+    from deepmd.calculator import DP
+    walker.calc = DP(model=settings['model'])
+elif settings['calculator'] == nequip:
+    from nequip.ase import NequIPCalculator
+    walker.calc = NequIPCalculator.from_deployed_model(settings['model'],\
+            device='cuda')
+else:
+    print('calculator not recognized')
+    exit()
 
 # setup simulation
 temperature = float(settings['temperature'])
@@ -28,7 +41,7 @@ scale = np.sqrt(2*timestep)
 # successful read, print out stuff
 print('read inputs from ' + argv[1])
 print('particles read from ' + settings['xyz'])
-print('DP model read from ' + settings['model'])
+print(settings['calculator'] + ' model read from ' + settings['model'])
 print('temperature: %s K (beta = %s eV^-1)' % (temperature, beta))
 print('pressure: %s eV/A^3 (%s GPa)' % (pressure, settings['pressure']))
 print('timestep: %s (length scale = %s)' % (timestep, scale))
