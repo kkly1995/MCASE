@@ -20,7 +20,7 @@ if settings['calculator'] == 'nep':
 elif settings['calculator'] == 'dp':
     from deepmd.calculator import DP
     walker.calc = DP(model=settings['model'])
-elif settings['calculator'] == nequip:
+elif settings['calculator'] == 'nequip':
     from nequip.ase import NequIPCalculator
     walker.calc = NequIPCalculator.from_deployed_model(settings['model'],\
             device='cuda')
