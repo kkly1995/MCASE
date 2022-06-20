@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 import numpy as np
 import mcase.particle_moves as mcp
+import mcase.cell_moves as mcc
 from ase.io import read, write
-from ase.units import kB
+from ase.units import kB, GPa
 from mcase.reader import read_input
 from sys import argv
 
@@ -29,27 +30,37 @@ else:
 
 # setup simulation
 temperature = float(settings['temperature'])
+pressure = float(settings['pressure'])*GPa
 timestep = float(settings['timestep'])
+cellstep = float(settings['cellstep'])
 number_samples = int(settings['samples'])
 beta = 1.0/(kB*temperature)
 scale = np.sqrt(2*timestep)
+cellscale = np.sqrt(2*cellstep)
 
 # successful read, print out stuff
 print('read inputs from ' + argv[1])
 print('particles read from ' + settings['xyz'])
 print(settings['calculator'] + ' model read from ' + settings['model'])
 print('temperature: %s K (beta = %s eV^-1)' % (temperature, beta))
+print('pressure: %s eV/A^3 (%s GPa)' % (pressure, settings['pressure']))
 print('timestep: %s (length scale = %s)' % (timestep, scale))
+print('cell step: %s (length scale = %s)' % (cellstep, cellscale))
 print('number of samples to calculate: %d' % number_samples)
 
 # start sampling
-accepted = 0
+p_accepted = 0 # for particle moves
+c_accepted = 0 # for cell moves
 r = walker.get_positions()
 energy = walker.get_potential_energy()
 force = walker.get_forces()
+stress = walker.get_stress()[:3]
+cell = walker.cell.cellpar()[:3]
+volume = np.prod(cell)
 N = len(walker)
 
 for _ in range(number_samples):
+    # particle move
     dr = rng.normal(size=r.shape, scale=scale) + timestep*beta*force
     r_new = r + dr
     walker.set_positions(r_new)
@@ -60,14 +71,36 @@ for _ in range(number_samples):
             force, force_new, beta, timestep):
         energy = energy_new
         force = np.copy(force_new)
+        stress = walker.get_stress()[:3]
         r = walker.get_positions(wrap=True) # wrap to avoid blowing up
-        accepted += 1
+        p_accepted += 1
     else:
         walker.set_positions(r)
-    print(energy)
+    # cell move
+    dc = -beta*volume*(pressure + stress) + N
+    dc *= cellstep / cell
+    dc += rng.normal(size=3, scale=cellscale)
+    cell_new = cell + dc
+    walker.set_cell(cell_new, scale_atoms=True)
+    volume_new = np.prod(cell_new)
+    energy_new = walker.get_potential_energy()
+    stress_new = walker.get_stress()[:3]
+    if rng.random() < mcc.acceptance_ratio(cell, cell_new, energy, energy_new,\
+            stress, stress_new, N, pressure, beta, cellstep):
+        energy = energy_new
+        force = walker.get_forces()
+        stress = np.copy(stress_new)
+        r = walker.get_positions(wrap=True)
+        cell = np.copy(cell_new)
+        volume = volume_new
+        c_accepted += 1
+    else:
+        walker.set_cell(cell, scale_atoms=True)
+    print(energy, cell[0], cell[1], cell[2])
 
 # finished
-print('particle move acceptance rate: %.2f' % (accepted / number_samples))
+print('particle move acceptance rate: %.2f' % (p_accepted / number_samples))
+print('cell move acceptance rate: %.2f' % (c_accepted / number_samples))
 
 print('writing final configuration to', settings['save_xyz'])
 write(settings['save_xyz'], walker, format='extxyz')

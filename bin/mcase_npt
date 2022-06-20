@@ -83,7 +83,7 @@ for _ in range(number_samples):
     walker.set_cell(cell_new, scale_atoms=True)
     volume_new = walker.get_volume()
     energy_new = walker.get_potential_energy()
-    if rng.random() < mcc.acceptance_ratio(energy, energy_new,\
+    if rng.random() < mcc.old_acceptance_ratio(energy, energy_new,\
             volume, volume_new, N, pressure, beta):
         energy = energy_new
         force = walker.get_forces()
