@@ -43,7 +43,7 @@ mask = (walker.get_scaled_positions(wrap=True)[:,dim] < partition)
 # successful read so far, print out stuff
 print('read inputs from ' + argv[1])
 print('particles read from ' + settings['xyz'])
-print('NEP model read from ' + settings['model'])
+print(settings['calculator'] + ' model read from ' + settings['model'])
 print('temperature: %s K (beta = %s eV^-1)' % (temperature, beta))
 print('timestep: %s (length scale = %s)' % (timestep, scale))
 print('number of samples to calculate: %d' % number_samples)

@@ -33,6 +33,7 @@ timestep = float(settings['timestep'])
 number_samples = int(settings['samples'])
 beta = 1.0/(kB*temperature)
 scale = np.sqrt(2*timestep)
+save_interval = int(settings['save_every'])
 
 # successful read, print out stuff
 print('read inputs from ' + argv[1])
@@ -41,6 +42,8 @@ print(settings['calculator'] + ' model read from ' + settings['model'])
 print('temperature: %s K (beta = %s eV^-1)' % (temperature, beta))
 print('timestep: %s (length scale = %s)' % (timestep, scale))
 print('number of samples to calculate: %d' % number_samples)
+print('writing samples to ' + settings['save_xyz'])
+print('will write every %d steps' % save_interval)
 
 # start sampling
 accepted = 0
@@ -49,7 +52,7 @@ energy = walker.get_potential_energy()
 force = walker.get_forces()
 N = len(walker)
 
-for _ in range(number_samples):
+for i in range(number_samples):
     dr = rng.normal(size=r.shape, scale=scale) + timestep*beta*force
     r_new = r + dr
     walker.set_positions(r_new)
@@ -65,9 +68,8 @@ for _ in range(number_samples):
     else:
         walker.set_positions(r)
     print(energy)
+    if i % save_interval == 0:
+        write(settings['save_xyz'], walker, format='extxyz', append=True)
 
 # finished
 print('particle move acceptance rate: %.2f' % (accepted / number_samples))
-
-print('writing final configuration to', settings['save_xyz'])
-write(settings['save_xyz'], walker, format='extxyz')
