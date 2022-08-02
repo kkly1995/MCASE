@@ -40,16 +40,16 @@ def subtract(samples, energy, force):
     # returns the samples with pair potential subtracted off
     # no stresses / virials
     from ase.calculators.singlepoint import SinglePointCalculator
-    from copy import deepcopy
     new_samples = []
-    for sample in samples:
-        pairs = sample.get_all_distances(mic=True, vector=True)
+    for i in range(len(samples)):
+        pairs = samples[i].get_all_distances(mic=True, vector=True)
         e, f = evaluate(pairs, energy, force)
         # replace
-        new_sample = deepcopy(sample)
-        new_calc = SinglePointCalculator(sample,
-                energy = sample.get_potential_energy() - e,
-                forces = sample.get_forces() - f
+        new_sample = samples[i].copy()
+        new_calc = SinglePointCalculator(new_sample,
+                energy = samples[i].get_potential_energy() - e,
+                forces = samples[i].get_forces() - f,
+                stress = None
                 )
         new_sample.calc = new_calc
         new_samples.append(new_sample)
