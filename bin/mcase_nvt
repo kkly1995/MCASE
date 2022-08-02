@@ -68,7 +68,7 @@ for i in range(number_samples):
     else:
         walker.set_positions(r)
     print(energy)
-    if i % save_interval == 0:
+    if i % save_interval == (save_interval - 1):
         write(settings['save_xyz'], walker, format='extxyz', append=True)
 
 # finished
