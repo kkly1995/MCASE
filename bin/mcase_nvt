@@ -69,7 +69,8 @@ for i in range(number_samples):
         walker.set_positions(r)
     print(energy)
     if i % save_interval == (save_interval - 1):
-        write(settings['save_xyz'], walker, format='extxyz', append=True)
+        write(settings['save_xyz'], walker, format='extxyz', append=True, 
+                write_info=False, write_results=False)
 
 # finished
 print('particle move acceptance rate: %.2f' % (accepted / number_samples))

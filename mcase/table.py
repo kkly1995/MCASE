@@ -39,16 +39,25 @@ def subtract(samples, energy, force):
     # for prepping data
     # returns the samples with pair potential subtracted off
     # no stresses / virials
+    # will overwrite the info dict as well as calculator results
     from ase.calculators.singlepoint import SinglePointCalculator
     new_samples = []
     for i in range(len(samples)):
         pairs = samples[i].get_all_distances(mic=True, vector=True)
         e, f = evaluate(pairs, energy, force)
-        # replace
+        # replace info
         new_sample = samples[i].copy()
+        new_sample.info['energy'] = samples[i].get_potential_energy() - e
+        new_sample.info['forces'] = samples[i].get_forces() - f
+        # if sample has stress, remove it
+        try:
+            new_sample.info.pop('stress')
+        except:
+            pass
+        # replace calc
         new_calc = SinglePointCalculator(new_sample,
-                energy = samples[i].get_potential_energy() - e,
-                forces = samples[i].get_forces() - f,
+                energy = new_sample.info['energy'],
+                forces = new_sample.info['forces'],
                 stress = None
                 )
         new_sample.calc = new_calc
