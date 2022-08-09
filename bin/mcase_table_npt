@@ -2,6 +2,7 @@
 import numpy as np
 import mcase.particle_moves as mcp
 import mcase.cell_moves as mcc
+from mcase.table import read_table, evaluate
 from ase.io import read, write
 from ase.units import kB, GPa
 from mcase.reader import read_input
@@ -28,6 +29,9 @@ else:
     print('calculator not recognized')
     exit()
 
+# setup tabulated pair potential
+pair_energy, pair_force = read_table(settings['table'])
+
 # setup simulation
 temperature = float(settings['temperature'])
 pressure = float(settings['pressure'])*GPa
@@ -43,6 +47,7 @@ save_interval = int(settings['save_every'])
 print('read inputs from ' + argv[1])
 print('particles read from ' + settings['xyz'])
 print(settings['calculator'] + ' model read from ' + settings['model'])
+print('tabulated pair potential read from %s' % settings['table'])
 print('temperature: %s K (beta = %s eV^-1)' % (temperature, beta))
 print('pressure: %s eV/A^3 (%s GPa)' % (pressure, settings['pressure']))
 print('timestep: %s (length scale = %s)' % (timestep, scale))
@@ -58,6 +63,10 @@ c_accepted = 0 # for cell moves
 r = walker.get_positions()
 energy = walker.get_potential_energy()
 force = walker.get_forces()
+pairs = walker.get_all_distances(mic=True, vector=True)
+add_energy, add_force = evaluate(pairs, pair_energy, pair_force)
+energy += add_energy
+force += add_force
 cell = walker.cell.cellpar()
 volume = walker.get_volume()
 N = len(walker)
@@ -69,6 +78,10 @@ for i in range(number_samples):
     walker.set_positions(r_new)
     energy_new = walker.get_potential_energy()
     force_new = walker.get_forces()
+    pairs = walker.get_all_distances(mic=True, vector=True)
+    add_energy, add_force = evaluate(pairs, pair_energy, pair_force)
+    energy_new += add_energy
+    force_new += add_force
     # accept or reject
     if rng.random() < mcp.acceptance_ratio(r, r_new, energy, energy_new,\
             force, force_new, beta, timestep):
@@ -86,10 +99,14 @@ for i in range(number_samples):
     walker.set_cell(cell_new, scale_atoms=True)
     volume_new = walker.get_volume()
     energy_new = walker.get_potential_energy()
+    pairs = walker.get_all_distances(mic=True, vector=True)
+    add_energy, add_force = evaluate(pairs, pair_energy, pair_force)
+    energy_new += add_energy
     if rng.random() < mcc.old_acceptance_ratio(energy, energy_new,\
             volume, volume_new, N, pressure, beta):
         energy = energy_new
         force = walker.get_forces()
+        force += add_force
         r = walker.get_positions(wrap=True)
         cell = np.copy(cell_new)
         volume = volume_new
