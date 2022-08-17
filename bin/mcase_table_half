@@ -1,0 +1,95 @@
+#!/usr/bin/env python
+import numpy as np
+import mcase.particle_moves as mcp
+from mcase.table import read_table, evaluate
+from ase.io import read, write
+from ase.units import kB
+from mcase.reader import read_input
+from sys import argv
+
+settings = read_input(argv[1])
+rng = np.random.default_rng()
+
+# setup system
+walker = read(settings['xyz'])
+
+# determine what the calculator is
+if settings['calculator'] == 'nep':
+    from pynep.calculate import NEP
+    walker.calc = NEP(settings['model'])
+elif settings['calculator'] == 'dp':
+    from deepmd.calculator import DP
+    walker.calc = DP(model=settings['model'])
+elif settings['calculator'] == 'nequip':
+    from nequip.ase import NequIPCalculator
+    walker.calc = NequIPCalculator.from_deployed_model(settings['model'],\
+            device='cuda')
+else:
+    print('calculator not recognized')
+    exit()
+
+# setup tabulated pair_potential
+pair_energy, pair_force = read_table(settings['table'])
+
+# setup simulation
+temperature = float(settings['temperature'])
+timestep = float(settings['timestep'])
+number_samples = int(settings['samples'])
+beta = 1.0/(kB*temperature)
+scale = np.sqrt(2*timestep)
+save_interval = int(settings['save_every'])
+
+# partition system
+dim = int(settings['dim']) # can be either 0, 1, or 2 (x, y, z)
+partition = float(settings['partition']) # 0 to 1, separate by scaled coordinates
+mask = (walker.get_scaled_positions(wrap=True)[:,dim] < partition)
+
+# successful read so far, print out stuff
+print('read inputs from ' + argv[1])
+print('particles read from ' + settings['xyz'])
+print(settings['calculator'] + ' model read from ' + settings['model'])
+print('tabulated pair potential read from %s' % settings['table'])
+print('temperature: %s K (beta = %s eV^-1)' % (temperature, beta))
+print('timestep: %s (length scale = %s)' % (timestep, scale))
+print('number of samples to calculate: %d' % number_samples)
+print('number of particles to move: %d' % np.sum(mask))
+print('writing samples to ' + settings['save_xyz'])
+print('will write every %d steps' % save_interval)
+
+# start sampling
+accepted = 0
+r = walker.get_positions()
+energy = walker.get_potential_energy()
+force = walker.get_forces()
+pairs = walker.get_all_distances(mic=True, vector=True)
+add_energy, add_force = evaluate(pairs, pair_energy, pair_force)
+energy += add_energy
+force += add_force
+N = len(walker)
+
+for i in range(number_samples):
+    dr = rng.normal(size=r.shape, scale=scale) + timestep*beta*force
+    r_new = np.copy(r)
+    r_new[mask] += dr[mask]
+    walker.set_positions(r_new)
+    energy_new = walker.get_potential_energy()
+    force_new = walker.get_forces()
+    pairs = walker.get_all_distances(mic=True, vector=True)
+    add_energy, add_force = evaluate(pairs, pair_energy, pair_force)
+    energy_new += add_energy
+    force_new += add_force
+    # accept or reject
+    if rng.random() < mcp.acceptance_ratio(r, r_new, energy, energy_new,\
+            force, force_new, beta, timestep):
+        energy = energy_new
+        force = np.copy(force_new)
+        r = walker.get_positions(wrap=True) # wrap to avoid blowing up
+        accepted += 1
+    else:
+        walker.set_positions(r)
+    print(energy)
+    if i % save_interval == 0:
+        write(settings['save_xyz'], walker, format='extxyz', append=True)
+
+# finished
+print('particle move acceptance rate: %.2f' % (accepted / number_samples))
