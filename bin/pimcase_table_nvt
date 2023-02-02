@@ -1,0 +1,134 @@
+#!/usr/bin/env python
+import numpy as np
+import mcase.particle_moves as mcp
+from mcase.quantum_moves import spring_potential, spring_force
+from mcase.table import read_table, evaluate
+from ase.io import read, write
+from ase.units import kB
+from mcase.reader import read_input
+from sys import argv
+
+settings = read_input(argv[1])
+rng = np.random.default_rng()
+
+# setup system
+walker = read(settings['xyz'], index=':')
+if not isinstance(walker, list):
+    print('walker must contain more than one slice')
+    exit()
+
+# determine what the calculator is
+if settings['calculator'] == 'nep':
+    from pynep.calculate import NEP
+    calc = NEP(settings['model'])
+elif settings['calculator'] == 'dp':
+    from deepmd.calculator import DP
+    calc = DP(model=settings['model'])
+elif settings['calculator'] == 'nequip':
+    from nequip.ase import NequIPCalculator
+    calc = NequIPCalculator.from_deployed_model(settings['model'],\
+            device='cuda')
+elif settings['calculator'] == 'mace':
+    from mace.calculators import MACECalculator
+    calc = MACECalculator(model_path=settings['model'],\
+            device='cuda')
+else:
+    print('calculator not recognized')
+    exit()
+
+# setup tabulated pair potential
+pair_energy, pair_force = read_table(settings['table'])
+
+# setup simulation
+temperature = float(settings['temperature'])
+timestep = float(settings['timestep'])
+number_samples = int(settings['samples'])
+beta = 1.0/(kB*temperature)
+scale = np.sqrt(2*timestep)
+save_interval = int(settings['save_every'])
+
+# path-integral scale
+num_beads = len(walker)
+mass = walker[0].get_masses()[0]
+path_time = beta / num_beads / mass
+path_time *= 0.00418015929
+
+# successful read, print out stuff
+print('read inputs from ' + argv[1])
+print('particles read from ' + settings['xyz'])
+print(settings['calculator'] + ' model read from ' + settings['model'])
+print('tabulated pair potential read from %s' % settings['table'])
+print('temperature: %s K (beta = %s eV^-1)' % (temperature, beta))
+print('timestep: %s (length scale = %s)' % (timestep, scale))
+print('quantum scale: %s (%d beads)' % (path_time, num_beads))
+print('number of samples to calculate: %d' % number_samples)
+print('writing samples to ' + settings['save_xyz'])
+print('will write every %d steps' % save_interval)
+
+# setup
+N = len(walker[0])
+r = np.zeros((num_beads, N, 3))
+energy_c = np.zeros(num_beads)
+forces_c = np.zeros_like(r)
+for j in range(num_beads):
+    r[j] = walker[j].get_positions()
+    walker[j].calc = calc
+    energy_c[j] = walker[j].get_potential_energy()
+    forces_c[j] = walker[j].get_forces()
+    # add table
+    pairs = walker[j].get_all_distances(mic=True, vector=True)
+    x, y = evaluate(pairs, pair_energy, pair_force)
+    energy_c[j] += x
+    forces_c[j] += y
+
+rc = 0.5 * (np.roll(r, 1, axis=0) + np.roll(r, -1, axis=0))
+energy_q = spring_potential(r, beta, path_time)
+forces_q = spring_force(r, rc, beta, path_time)
+
+# begin sampling
+total_accepted = 0
+for i in range(number_samples):
+    path_accepted = 0
+    for j in range(num_beads):
+        r_old = np.copy(r[j])
+        rc_old = np.copy(rc)
+        r[j] += rng.normal(size=(N,3), scale=scale)
+        r[j] += beta * timestep * forces_q[j]
+        r[j] += beta * timestep * forces_c[j] / num_beads
+        # calculate new quantities
+        rc = 0.5 * (np.roll(r, 1, axis=0) + np.roll(r, -1, axis=0))
+        energy_q_new = spring_potential(r, beta, path_time)
+        forces_q_new = spring_force(r, rc, beta, path_time)
+        walker[j].set_positions(r[j])
+        energy_c_new = walker[j].get_potential_energy()
+        forces_c_new = walker[j].get_forces()
+        pairs = walker[j].get_all_distances(mic=True, vector=True)
+        x, y = evaluate(pairs, pair_energy, pair_force)
+        energy_c_new += x
+        forces_c_new += y
+        # accept / reject
+        if rng.random() < mcp.acceptance_ratio(r_old, r[j],\
+                energy_q + energy_c[j] / num_beads,\
+                energy_q_new + energy_c_new / num_beads,\
+                forces_q[j] + forces_c[j] / num_beads,\
+                forces_q_new[j] + forces_c_new / num_beads,\
+                beta, timestep):
+            energy_q = energy_q_new
+            forces_q = forces_q_new
+            energy_c[j] = energy_c_new
+            forces_c[j] = forces_c_new
+            path_accepted += 1
+        else:
+            r[j] = np.copy(r_old)
+            rc = np.copy(rc_old)
+            walker[j].set_positions(r[j])
+    print(np.mean(energy_c), energy_q)
+    total_accepted += path_accepted / num_beads
+    if i % save_interval == (save_interval - 1):
+        write(settings['save_slice'], walker[0], format='extxyz', append=True, 
+                write_info=False, write_results=False)
+
+# finished
+print('particle move acceptance rate: %.2f' % (total_accepted / number_samples))
+write(settings['save_xyz'], walker, format='extxyz', append=False, 
+        write_info=False, write_results=False)
