@@ -24,6 +24,10 @@ elif settings['calculator'] == 'nequip':
     from nequip.ase import NequIPCalculator
     walker.calc = NequIPCalculator.from_deployed_model(settings['model'],\
             device='cuda')
+elif settings['calculator'] == 'mace':
+    from mace.calculators import MACECalculator
+    walker.calc = MACECalculator(model_path=settings['model'],\
+            device='cuda')
 else:
     print('calculator not recognized')
     exit()
