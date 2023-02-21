@@ -28,7 +28,7 @@ elif settings['calculator'] == 'nequip':
 elif settings['calculator'] == 'mace':
     from mace.calculators import MACECalculator
     walker.calc = MACECalculator(model_path=settings['model'],\
-            device='cuda')
+            device='cuda', default_dtype='float32')
 else:
     print('calculator not recognized')
     exit()
