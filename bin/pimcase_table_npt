@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 import numpy as np
 import mcase.particle_moves as mcp
-from mcase.quantum_moves import spring_potential, spring_force, get_rc
+import mcase.cell_moves as mcc
+import mcase.quantum_moves as mcq
 from mcase.table import read_table, evaluate
 from ase.io import read, write
-from ase.units import kB
+from ase.units import kB, GPa
 from mcase.reader import read_input
 from sys import argv
 
@@ -41,7 +42,9 @@ pair_energy, pair_force = read_table(settings['table'])
 
 # setup simulation
 temperature = float(settings['temperature'])
+pressure = float(settings['pressure']) * GPa
 timestep = float(settings['timestep'])
+cellstep = float(settings['cellstep'])
 number_samples = int(settings['samples'])
 beta = 1.0/(kB*temperature)
 scale = np.sqrt(2*timestep)
@@ -59,7 +62,9 @@ print('particles read from ' + settings['xyz'])
 print(settings['calculator'] + ' model read from ' + settings['model'])
 print('tabulated pair potential read from %s' % settings['table'])
 print('temperature: %s K (beta = %s eV^-1)' % (temperature, beta))
+print('pressure: %s eV/A^3 (%s GPa)' % (pressure, settings['pressure']))
 print('timestep: %s (length scale = %s)' % (timestep, scale))
+print('cell step: %s A' % cellstep)
 print('quantum scale: %s (%d beads)' % (path_time, num_beads))
 print('number of samples to calculate: %d' % number_samples)
 print('writing samples from bead 0 to ' + settings['save_slice'])
@@ -81,15 +86,21 @@ for j in range(num_beads):
     x, y = evaluate(pairs, pair_energy, pair_force)
     energy_c[j] += x
     forces_c[j] += y
+cell = walker[0].cell.cellpar()[:3] # CELL MUST BE IDENTICAL OVER PATH
+volume = np.prod(cell)
 
-rc = get_rc(r)
-energy_q = spring_potential(r, beta, path_time)
-forces_q = spring_force(r, rc, beta, path_time)
+rc = mcq.get_rc(r)
+energy_q = mcq.spring_potential(r, beta, path_time)
+forces_q = mcq.spring_force(r, rc, beta, path_time)
 
 # begin sampling
 total_accepted = 0
+cell_accepted = 0
+energy_c_new = np.zeros_like(energy_c)
+forces_c_new = np.zeros_like(forces_c) # keeping these arrays better for memory?
 for i in range(number_samples):
     path_accepted = 0
+    # particle move
     for j in range(num_beads):
         r_old = np.copy(r[j])
         rc_old = np.copy(rc)
@@ -97,33 +108,66 @@ for i in range(number_samples):
         r[j] += beta * timestep * forces_q[j]
         r[j] += beta * timestep * forces_c[j] / num_beads
         # calculate new quantities
-        rc = get_rc(r)
-        energy_q_new = spring_potential(r, beta, path_time)
-        forces_q_new = spring_force(r, rc, beta, path_time)
+        rc = mcq.get_rc(r)
+        energy_q_new = mcq.spring_potential(r, beta, path_time)
+        forces_q_new = mcq.spring_force(r, rc, beta, path_time)
         walker[j].set_positions(r[j])
-        energy_c_new = walker[j].get_potential_energy()
-        forces_c_new = walker[j].get_forces()
+        energy_c_new[j] = walker[j].get_potential_energy()
+        forces_c_new[j] = walker[j].get_forces()
         pairs = walker[j].get_all_distances(mic=True, vector=True)
         x, y = evaluate(pairs, pair_energy, pair_force)
-        energy_c_new += x
-        forces_c_new += y
+        energy_c_new[j] += x
+        forces_c_new[j] += y
         # accept / reject
         if rng.random() < mcp.acceptance_ratio(r_old, r[j],\
                 energy_q + energy_c[j] / num_beads,\
-                energy_q_new + energy_c_new / num_beads,\
+                energy_q_new + energy_c_new[j] / num_beads,\
                 forces_q[j] + forces_c[j] / num_beads,\
-                forces_q_new[j] + forces_c_new / num_beads,\
+                forces_q_new[j] + forces_c_new[j] / num_beads,\
                 beta, timestep):
             energy_q = energy_q_new
             forces_q = forces_q_new
-            energy_c[j] = energy_c_new
-            forces_c[j] = forces_c_new
+            energy_c[j] = energy_c_new[j]
+            forces_c[j] = forces_c_new[j]
             path_accepted += 1
         else:
             r[j] = np.copy(r_old)
             rc = np.copy(rc_old)
             walker[j].set_positions(r[j])
-    print(np.mean(energy_c), energy_q)
+    # cell move
+    cell_new = cell + cellstep * (rng.random(size=3) - 0.5)
+    volume_new = np.prod(cell_new)
+    r_new = mcq.rescale_path(r, cell, cell_new)
+    energy_q_new = mcq.spring_potential(r_new, beta, path_time)
+    rc_new = mcq.get_rc(r_new)
+    forces_q_new = mcq.spring_force(r_new, rc_new, beta, path_time)
+    # have to set all slices
+    for j in range(num_beads):
+        walker[j].set_cell(cell_new, scale_atoms=True)
+        energy_c_new[j] = walker[j].get_potential_energy()
+        forces_c_new[j] = walker[j].get_forces()
+        pairs = walker[j].get_all_distances(mic=True, vector=True)
+        x, y = evaluate(pairs, pair_energy, pair_force)
+        energy_c_new[j] += x
+        forces_c_new[j] += y
+    if rng.random() < mcc.old_acceptance_ratio(\
+            energy_q + np.mean(energy_c),\
+            energy_q_new + np.mean(energy_c_new),\
+            volume, volume_new, N*num_beads, pressure, beta):
+        cell = np.copy(cell_new)
+        volume = volume_new
+        r = np.copy(r_new)
+        energy_q = energy_q_new
+        rc = np.copy(rc_new)
+        forces_q = np.copy(forces_q_new)
+        energy_c = np.copy(energy_c_new)
+        forces_c = np.copy(forces_c_new)
+        cell_accepted += 1
+    else:
+        for j in range(num_beads):
+            # need to reset walkers
+            walker[j].set_cell(cell, scale_atoms=True)
+    print(np.mean(energy_c), energy_q, cell[0], cell[1], cell[2])
     total_accepted += path_accepted / num_beads
     if i % save_interval == (save_interval - 1):
         write(settings['save_slice'], walker[0], format='extxyz', append=True, 
@@ -131,5 +175,6 @@ for i in range(number_samples):
 
 # finished
 print('particle move acceptance rate: %.2f' % (total_accepted / number_samples))
+print('cell move acceptance rate: %.2f' % (cell_accepted / number_samples))
 write(settings['save_xyz'], walker, format='extxyz', append=False, 
         write_info=False, write_results=False)

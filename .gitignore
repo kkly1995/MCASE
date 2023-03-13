@@ -2,3 +2,4 @@
 *.swp
 bin/lj*
 bin/eam*
+writeup/*

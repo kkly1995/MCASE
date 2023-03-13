@@ -10,7 +10,20 @@ def spring_potential(r, beta, tp):
 #    val = minimum_image(val, L)
     return 0.5 * np.sum(val**2) / beta / tp
 
+def get_rc(path):
+    # path has shape (M, N, 3)
+    return 0.5 * (np.roll(path, 1, axis=0) + np.roll(path, -1, axis=0))
+
 def spring_force(r, rc, beta, tp):
     # force from spring_potential()
 #    return 2 * minimum_image(rc - r, L) / beta / tp
     return 2 * (rc - r) / beta / tp
+
+def rescale_path(r, old_L, new_L):
+    # for NPT
+    # should mimic behavior of scale_atoms=True in ASE
+    # r has shape (M, N, 3)
+    # old_L and new_L are either floats (for cubic)
+    # or both have shape (3,) (for orthorhombic)
+    # both work because of numpy's broadcasting along last axis (?)
+    return r * new_L / old_L
