@@ -172,6 +172,8 @@ for i in range(number_samples):
     if i % save_interval == (save_interval - 1):
         write(settings['save_slice'], walker[0], format='extxyz', append=True, 
                 write_info=False, write_results=False)
+        write(settings['save_xyz'], walker, format='extxyz', append=False, 
+                write_info=False, write_results=False)
 
 # finished
 print('particle move acceptance rate: %.2f' % (total_accepted / number_samples))
