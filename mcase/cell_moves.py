@@ -56,7 +56,6 @@ def acceptance_ratio(L1, L2, V1, V2, s1, s2, N, P, beta, tau):
 def old_acceptance_ratio(V1, V2, vol1, vol2, N, P, beta):
     """
     acceptance ratio for cell move
-    no stress is included here, keeping this function for testing
 
     args:
         V1 (float): initial energy
