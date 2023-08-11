@@ -52,13 +52,17 @@ save_interval = int(settings['save_every'])
 
 # path-integral scale
 num_beads = len(walker)
-mass = walker[0].get_masses()[0]
+if 'mass' in settings:
+    mass = float(settings['mass'])
+else:
+    mass = walker[0].get_masses()[0]
 path_time = beta / num_beads / mass
 path_time *= 0.00418015929
 
 # successful read, print out stuff
 print('read inputs from ' + argv[1])
 print('particles read from ' + settings['xyz'])
+print('they have mass %s (amu)' % mass)
 print(settings['calculator'] + ' model read from ' + settings['model'])
 print('tabulated pair potential read from %s' % settings['table'])
 print('temperature: %s K (beta = %s eV^-1)' % (temperature, beta))
