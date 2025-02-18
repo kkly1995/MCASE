@@ -1,0 +1,141 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{setspace}
+\usepackage[indent]{parskip}
+
+\title{MCASE}
+\author{Kevin Ly}
+
+\newcommand{\mean}[1]{\left\langle #1 \right\rangle}
+
+\begin{document}
+
+    \maketitle
+
+    \onehalfspacing
+
+The purpose of MCASE is to evaluate the following integrals using a Metropolis-Hastings algorithm:
+%
+\begin{equation}
+    \label{eq:stat_mech_integrals}
+    \begin{split}
+        \mean{A}_{\text{NVT}} &= \frac{
+            \int d\{\boldsymbol{R}\} \ A(\{\boldsymbol{R}\}) \exp[-\beta U(\{\boldsymbol{R}\})]
+        }{
+            \int d\{\boldsymbol{R}\} \ \exp[-\beta U(\{\boldsymbol{R}\})]
+        } \\
+        \mean{A}_{\text{NPT}} &= \frac{
+            \int dV d\{\boldsymbol{s}\} \ V^N A(\{\boldsymbol{R}\}) \exp(-\beta[ U + P V])
+            }{
+            \int dV d\{\boldsymbol{s}\} \ V^N \exp(-\beta [U + P V])
+            }
+    \end{split}
+\end{equation}
+%
+where $A$ is an observable of interest, $V$ is the volume of the simulation cell, and $\{\boldsymbol{s}\}$ is the set of scaled coordinates.
+The quantum estimates are obtained by simply replacing the potential with an effective potential $U \to \tilde{U}$ according to the isomorphism attained through the path integral formalism.
+
+
+I will begin by describing how to draw samples from the relative distribution $P(\{\boldsymbol{R}\}) = e^{-\beta U(\{\boldsymbol{R}\})}$ (NVT); the routines for sampling the other distributions (to be described) will ultimately be based on this scheme.
+A trajectory of configurations is produced by using the \emph{all-particle} move
+%
+\begin{equation}
+    \label{eq:all_particle_move}
+    \begin{split}
+        T(\{\boldsymbol{R}\} \to \{\boldsymbol{R}\}') &\propto \prod_i \exp \left( - \frac{\boldsymbol{R}_i' - \boldsymbol{R}_i - \tau \beta \boldsymbol{F}_i)^2}{4 \tau} \right) \\
+        &= \exp \left( -\sum_i \frac{(\boldsymbol{R}_i' - \boldsymbol{R}_i - \tau \beta \boldsymbol{F}_i)^2}{4 \tau} \right)
+    \end{split}
+\end{equation}
+%
+where $\tau$ is a user-specified step size, and $\boldsymbol{F}_i$ is the force on particle $i$ \emph{in the current configuration} $\{\boldsymbol{R}\}$.
+The proportionality in the first line is to indicate that there is an (irrelevant) normalization factor in front.
+The reverse probability $T(\{\boldsymbol{R}\}' \to \{\boldsymbol{R}\})$, which is required for calculating the acceptance ratio, involves the forces calculated in the proposed configuration $\{\boldsymbol{R}\}'$.
+
+This is a product of Gaussians, each centered at $\boldsymbol{R}_i + \tau \beta \boldsymbol{F}_i$, with width $\sigma = \sqrt{2 \tau}$.
+Therefore, to execute this move in practice, every coordinate is moved by adding $\boldsymbol{\chi} + \tau \beta \boldsymbol{F}$, where $\boldsymbol{\chi}$ is a random vector whose components are independently drawn from the normal distribution with $\sigma = \sqrt{2 \tau}$.
+While it is intuitive to push the particle in the direction of the force exerted upon it, the formal reason for doing so is because this is the direction of increasing probability:
+%
+\begin{equation}
+    \label{eq:increasing_probability}
+    \begin{split}
+        \nabla_i e^{-\beta U(\{\boldsymbol{R}\})} &= (-\beta \nabla_i U) e^{-\beta U} \\
+        \implies \nabla_i \log P &= - \beta \boldsymbol{F}_i
+    \end{split}
+\end{equation}
+%
+where, by definition, $\boldsymbol{F}_i = -\nabla_i U$.
+The direction of increasing log probability is also the direction of increasing probability.
+
+To sample the relative distribution $e^{-\beta (U + P V) + N \log V}$, a trajectory is produced by alternating between the move \eqref{eq:all_particle_move} and a move which changes the shape of the simulation cell.
+In MCASE, the shape of the cell is a parallelepiped characterized by a vector $\boldsymbol{c}$ of six numbers: the three side lengths, and the three angles between the sides.
+The ``cell move'' is
+%
+\begin{equation}
+    \label{eq:cell_move}
+    T(\boldsymbol{c} \to \boldsymbol{c}') \propto
+    \begin{cases}
+        1, \quad & \boldsymbol{c}' - \boldsymbol{c} \in [-\sigma_l, \sigma_l)^3 \times [-\sigma_a, \sigma_a)^3 \\
+        0, \quad & \text{otherwise}.
+    \end{cases}
+\end{equation}
+%
+where $\sigma_l$ is a user-specified step size for the side lengths, and $\sigma_a$ for the angles.
+This is a uniform distribution over the hyperrectangle centered at $\boldsymbol{c}$.
+To carry out the move, $\sigma_l \chi$ is added to each side length, and $\sigma_a \chi$ is added to each angle, where $\chi$ is uniformly drawn from $[-1, 1)$; an independently drawn $\chi$ is used for each component.
+Unlike the particle move, \eqref{eq:cell_move} is symmetric $T(\boldsymbol{c} \to \boldsymbol{c}') = T(\boldsymbol{c}' \to \boldsymbol{c})$.
+As a result, the acceptance ratio for this move simplifies to
+%
+\begin{equation}
+    \label{eq:cell_acceptance}
+    \mathcal{A}(\boldsymbol{c} \to \boldsymbol{c}') = \exp \left[ -\beta (P [V' - V] + [U' - U]) + N \log(V' / V) \right].
+\end{equation}
+%
+When changing the simulation cell, the scaled coordinates are kept fixed, meaning that the real coordinates are changed.
+As a result, the change in energy is generally non-zero, and must be computed for this step.
+However, no derivatives are required.
+
+Allowing arbitrary changes to the shape of the cell is important when simulating solids, but can be deterimental for simulating liquids.
+This is because liquids can freely conform to their containers.
+This means that, at a given pressure and temperature, although the cell volume will fluctuate about some equilibrium value, the shape can be arbitrarily deformed.
+To prevent this, there is a separate algorithm in which a cubic cell, which is characterized by only a single side length $L$, will remain cubic.
+Changes to the cell occur only through changing this one side length, rather than all 6 cell parameters.
+
+To recap, the main loop in the classical algorithm is
+\begin{enumerate}
+    \item Propose new coordinates for every particle $\boldsymbol{R}' = \boldsymbol{R} + \tau \beta \boldsymbol{F} + \boldsymbol{\chi}$.
+    \item Compute the new energy and new forces for the proposed configuration using the \texttt{ASE} calculator of choice.
+    \item Compute the acceptance ratio
+        \begin{equation}
+            \label{eq:particle_acceptance}
+            \mathcal{A}_p = \exp \left[ \log T - \log T - \beta \Delta U \right]
+        \end{equation}
+        where $T$ is \eqref{eq:all_particle_move} and $T'$ is the reverse probability.
+        Even when we are sampling the NPT ensemble, the volume terms do not enter here because the cell is not being changed in this move.
+    \item Accept or reject: either all quantities are updated (accepted) or reverted (rejected).
+    \item[(NPT) 5.] Propose a new cell shape by adding to each side length a uniformly drawn random number from $[-\sigma_l, \sigma_l)$, and adding to each angle a uniformly drawn random number from $[-\sigma_a, \sigma_a)$.
+    \item[(NPT) 6.] Compute the new energy of the proposed configuration.
+        The new forces are not required at this step, so that if this cell move is rejected, this skips an excess force calculation.
+    \item[(NPT) 7.] Compute the acceptance ratio \eqref{eq:cell_acceptance}.
+    \item[(NPT) 8.] Accept or reject: either all quantities are updated, requiring the force calculation skipped earlier, or reverted.
+\end{enumerate}
+Conveniently, the NVT and NPT algorithms are identical up to the last 4 steps.
+
+Path-integral simulations in \texttt{MCASE} follow the same algorithm just described but with the effective potential instead of $U$.
+For convenience, the effective potential is reproduced below:
+%
+\begin{equation}
+    \label{eq:path_integral_potential_again}
+    \tilde{U} = \frac{p m}{2 \beta^2 \hbar^2} \sum_{i=1}^p \sum_{j = 1}^N |\boldsymbol{R}_j^i - \boldsymbol{R}_j^{i+1}|^2 + \frac{1}{p} \sum_{i=1}^p U(\{\boldsymbol{R}\}_i)
+\end{equation}
+%
+where $p$ is the number of beads in the path, $m$ is the mass of the particles (assumed to all be identical), $\{\boldsymbol{R}\}_i$ is the $i$th bead in the path, and $\boldsymbol{R}_j^i$ is the coordinate of particle $j$ in bead $i$.
+At any given step, the state of the system is characterized not by a single configuration of coordinates, but rather a set of $p$ configurations.
+Each configuration is kept as its own \texttt{ASE} object, so that total energies and forces are calculated on a per-bead basis.
+For this reason, only one bead is moved at a time, though all particles within that bead will be moved.
+
+For simulations at fixed pressure, the simulation cell is identical throughout the entire path.
+As a result, whenever a change in simulation cell is proposed, this change will apply to all beads.
+In \texttt{MCASE}, all-particle moves will be proposed for every bead before a cell move is proposed.
+This means that, for a path with $p$ beads, there will be $p$ all-particle moves for every cell move.
+
+\end{document}
